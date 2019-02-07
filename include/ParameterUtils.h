@@ -1,11 +1,9 @@
 //
 // Created by Martin Hermant on 24/10/2018.
 //
+#pragma once
 
-#ifndef PMCPP_PARAMETERUTILS_H
-#define PMCPP_PARAMETERUTILS_H
-
-
+#if 0
 
 namespace AddressUtils{
     struct AddressIterator{
@@ -48,17 +46,17 @@ namespace AddressUtils{
     };
 
 
-    static std::string buildOSCAddress(ParameterNode * p,ParameterGroup *root){
-        if(!p->parentGroup){return "";}
-        auto it = ParamIterators::FromRoot(p,root);
-        std::string res ;
-        it.next(); // jump root
-        while(auto pp= it.next()){
-            res+="/";res+=pp->getNameStr();
-        }
-        return res;
-
-    }
+//    static std::string buildOSCAddress(ParameterNode * p,ParameterGroup *root){
+//        if(!p->parentTree){return "";}
+//        auto it = ParamIterators::FromRoot(p,root);
+//        std::string res ;
+//        it.next(); // jump root
+//        while(auto pp= it.next()){
+//            res+="/";res+=pp->getNameStr();
+//        }
+//        return res;
+//
+//    }
 
     ParameterNode * getNodeFromOSCAddress(ParameterGroup * root,const char * ad){
         if(!ad|| !root)return nullptr;
@@ -79,8 +77,8 @@ namespace AddressUtils{
                     //if(auto pl = ParamCasting::toClass<ParameterList>(insp)){
                     char * p ;
                     int idx =atoi(it.getCurChrPtr()) ;
-                    if(*p==0 && (idx<insp->params.size())){
-                        res = insp->params[idx];
+                    if(*p==0 && (idx<insp->leafs.size())){
+                        res = insp->leafs[idx];
                     }
                     //}
 
@@ -114,5 +112,5 @@ namespace AddressUtils{
 
 }//namespace  AdressUtils
 
+#endif
 
-#endif //PMCPP_PARAMETERUTILS_H

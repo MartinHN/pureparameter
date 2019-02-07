@@ -9,20 +9,24 @@ public:
 };
 
 class ParameterGroup;
+
+class ParamModifier{};
+
 class AbstractParameterListener;
+
 
 class ParameterNode:public NonAssignable{
 public:
-  ParameterNode(Identifier _name):name(_name),parentGroup(nullptr){};
+  ParameterNode(Identifier _name):name(_name),parentTree(nullptr){};
   virtual ~ParameterNode(){};
   Identifier name;
   std::string getNameStr(){return name.c_str();}
   virtual std::string getTypeStr() const = 0;
   virtual std::type_index getTypeId() const =0;
-  ParameterGroup* parentGroup;
+  ParameterGroup* parentTree;
   bool isChildOf(ParameterNode* p){
     ParameterNode * insp = this;
-    while(insp = (ParameterNode*)insp->parentGroup){
+    while(insp = (ParameterNode*)insp->parentTree){
       if(insp==p){return true;}
     }
     return false;
@@ -31,11 +35,9 @@ public:
   
 };
 
-class ParamModifier{};
-
 class AbstractParameter:public ParameterNode,public ParamModifier{
 public:
-  AbstractParameter(Identifier n):ParameterNode(n),lockedModifier(nullptr){};
+  AbstractParameter(Identifier n):ParameterNode(n){};
   virtual ~AbstractParameter(){};
   #if USE_STR_CONV
   virtual String toString() = 0;
@@ -50,8 +52,18 @@ public:
   //virtual std::type_index getType() =0;
   
 private:
-  ParamModifier * lockedModifier;
+//  ParamModifier * lockedModifier;
   
+};
+
+class AbstractParameterListener:public ParamModifier,public Weak<AbstractParameterListener> {
+public:
+
+    AbstractParameterListener():Weak(this){};
+    virtual ~AbstractParameterListener(){};
+    virtual void paramChanged(ParamModifier * caller,AbstractParameter* source){};
+
+
 };
 
 
@@ -67,14 +79,6 @@ public:
 
 };
 
-
-class AbstractParameterListener:public ParamModifier {
-public:
-  AbstractParameterListener(){};
-  virtual ~AbstractParameterListener(){};
-  virtual void paramChanged(ParamModifier * caller,AbstractParameter* source)=0;
-  
-};
 
 
 
@@ -101,7 +105,9 @@ public:
   virtual ~Parameter(){};
   
   std::string getTypeNameStr()override{return type_to_string<T>();}
-  std::string getValueAsString()override{return std::to_string(value);}
+  std::string getValueAsString()override{
+    return std::to_string(value);
+  }
   
   void commitValue(const T& v,ParamModifier* from=nullptr,bool forceLaterFetch=false){
     setValue(v,from,false,false,true);
@@ -204,7 +210,7 @@ template <> void Parameter<TriggerType>::setValueInternal(const TriggerType & v1
 
 TriggerType TriggerImpl; // to use to pass fake member to setValue
 
-
+template <> std::string Parameter<std::string>::getValueAsString(){return value;}
 #if USE_STR_CONV
 template<> void Parameter<int>::setFromString(const String & in,AbstractParameterListener* from,bool forceNotify){ value  = in.toInt();}
 template<> void Parameter<float>::setFromString(const String & in,AbstractParameterListener* from,bool forceNotify){ value  = in.toFloat();}
@@ -262,252 +268,6 @@ public:
 };
 
 
-
-//////////////
-// ParamGroup
-///////////////
-
-class ParameterGroup :public ParameterNode,public AbstractParameterListener{
-public:
-
-
-  static ParameterGroup * setRoot(ParameterGroup * r){
-      ParameterGroup ** root = getRootI();
-  #if DO_DBG
-    if(*root){DBG.println("overriding root parameter");}
-  #endif
-    *root = r;
-    return r;
-  }
-    static ParameterGroup ** getRootI(){
-        static ParameterGroup ** rootI(nullptr);
-        if(!rootI){
-            rootI = new ParameterGroup*(nullptr);
-        }
-        return rootI;
-
-  }
-  static ParameterGroup * getRoot(){
-      auto ** rootI = getRootI();
-      if(!*rootI){
-        *rootI = new ParameterGroup("root");
-      }
-      return *rootI;
-  }
-
-  
-  ParameterGroup(Identifier n):ParameterNode(n){}
-  virtual ~ParameterGroup(){};
-  
-  
-  std::string getTypeStr() const override {static std::string tidstr ("group");return tidstr;}
-  std::type_index getTypeId() const override {return typeid(this);}
-
-    ParameterGroup* addParameterGroup(ParameterGroup* p){
-    if( p->parentGroup){p->parentGroup->removeParameterGroup(p);}
-    p->parentGroup = this;
-    paramGroups.push_back(p);
-    for(auto l:structListeners){l->groupAdded(this,p);}
-      auto insp = this;
-    while((insp = insp->parentGroup)){for(auto l:insp->structListeners){l->groupAdded(this,p);}}
-    return p;
-  }
-
-
-  void addParameter(AbstractParameter * p){
-   p->addListener(this);
-   if(p->parentGroup){p->parentGroup->removeParameter(p); }
-   p->parentGroup = this;
-   params.push_back(p);
-   
-   for(auto l:structListeners){l->paramAdded(this,p);}
-     auto insp = this;
-   while((insp = insp->parentGroup)){for(auto l:insp->structListeners){l->paramAdded(this,p);}}
- }
- 
- Parameter<TriggerType>*   addTrigger(Identifier n){
-  auto np = new Parameter<TriggerType>(n,TriggerType());
-  addParameter(np);
-  
-  return np;
-}
-  template<typename F>
-Parameter<TriggerType >* addTrigger(Identifier n,F f){
-  auto t = addTrigger(n);
-  t->addRTFunctionListener(f);
-  return  t;
-}
-
-  template<typename T>
-Parameter<T>* addParameter(Identifier n,T val){
-  auto np = new Parameter<T>(n,val);
-  addParameter(np);
-  return np;
-}
-    template<typename T>
-NumericParameter<T>* addParameter(Identifier n,T val,T min,T max){
-  auto np = new NumericParameter<T>(n,val,min,max);
-  addParameter(np);
-  return np;
-}
-void removeParameter(AbstractParameter *p){
-  p->removeListener(this);
-  for(auto l:structListeners){l->paramRemoved(this,p);}
-   auto insp = this;
- while((insp = insp->parentGroup)){for(auto l:insp->structListeners){l->paramRemoved(this,p);}}
- for(auto pp = params.begin() ;pp!= params.end() ;++pp){
-  if(*pp==p){params.erase(pp);break;}
-}
-p->parentGroup = nullptr;
-}
-
-void removeParameterGroup(ParameterGroup *pg){
-  for(auto l:structListeners){l->groupRemoved(this,pg);}
-   auto insp = this;
- while((insp = insp->parentGroup)){for(auto l:insp->structListeners){l->groupRemoved(this,pg);}}
- for(auto pp = paramGroups.begin() ;pp!= paramGroups.end() ;++pp){
-  if(*pp==pg){paramGroups.erase(pp);break;}
-}
-pg->parentGroup = nullptr;
-
-}
-
-void paramChanged(ParamModifier * caller,AbstractParameter* source)override{
-  dispatch_feedback(caller,source);
-};
-
-
-ParameterGroup * getGroup(Identifier i){
-  auto it = find_if(paramGroups.begin(), paramGroups.end(), [i] (const ParameterGroup* pg) { return pg->name == i; } );
-  if(it!=paramGroups.end()){return *it;}
-  return nullptr;
-}
-ParameterGroup * getGroup(const char* n,int len){
-  auto it = find_if(paramGroups.begin(), paramGroups.end(), 
-    [n,len] (const ParameterGroup* pg) 
-    { return strncmp(pg->name.c_str(),n,len)==0; } 
-    );
-  if(it!=paramGroups.end()){return *it;}
-  return nullptr;
-}
-
-AbstractParameter * getParameter(Identifier i){
-  auto it = find_if(params.begin(), params.end(), [i] (const AbstractParameter* p) { return p->name == i; } );
-  if(it!=params.end()){return *it;}
-  return nullptr;
-}
-AbstractParameter * getParameter(const char* n,int len){
-  auto it = find_if(params.begin(), params.end(), [n,len] (const AbstractParameter* p) { return strncmp(p->name.c_str(),n,len)==0; } );
-  if(it!=params.end()){return *it;}
-  return nullptr;
-}
-
-class ParamGroupStructListener{
-public:
-  ParamGroupStructListener(){}
-  virtual void paramAdded(ParameterGroup* caller,AbstractParameter* source)=0;
-  virtual void paramRemoved(ParameterGroup* caller,AbstractParameter* source)=0;
-  virtual void groupAdded(ParameterGroup* caller,ParameterGroup* source)=0;
-  virtual void groupRemoved(ParameterGroup* caller,ParameterGroup* source)=0;
-
-};
-
-void addParamGroupStructListener( ParamGroupStructListener *l){structListeners.push_back(l);}
-void removeParamGroupStructListener( ParamGroupStructListener *l){structListeners.erase( std::remove_if( structListeners.begin(), structListeners.end(), [l](const ParamGroupStructListener * x){return x==l;} ), structListeners.end() );}
-
-typedef AbstractParameterListener ParamGroupListener;
-
-void addParamGroupListener( ParamGroupListener *l){paramGroupListeners.push_back(l);}
-void removeParamGroupListener( ParamGroupListener *l){paramGroupListeners.erase( std::remove_if( paramGroupListeners.begin(), paramGroupListeners.end(), [l](const ParamGroupListener * x){return x==l;} ), paramGroupListeners.end() );}
-
-std::vector<AbstractParameter*> params;
-std::vector<ParameterGroup*> paramGroups;
-protected:
-  std::vector<ParamGroupStructListener *> structListeners;
-  std::vector<ParamGroupListener *> paramGroupListeners;
-
-
-
-  virtual void dispatch_feedback(ParamModifier * caller,AbstractParameter *p){
-    for(auto l:paramGroupListeners){l->paramChanged(caller,p);}
-      if(parentGroup){parentGroup->dispatch_feedback(caller,p);}
-  }
-private:
-  static ParameterGroup *rootParameter;
-};
-
-
-class ParameterList : public ParameterGroup{
-public:
-  ParameterList(Identifier n):ParameterGroup(n){}
-  void addParameterGroup(ParameterGroup* p){
-    #if DO_DBG
-    DBG.println("can't add group to list");
-    #endif
-  }
-  struct PListIterator:public AbstractParameterIterator{
-  public:
-    PListIterator(ParameterList* _pl):pl(_pl){
-      if(pl){size = pl->params.size();}
-      count=-1;
-    };
-    ~PListIterator(){};
-    AbstractParameter* next()override{
-      count++;
-      if(!pl || count>=size)return nullptr;
-      return pl->params[count];;
-    }
-    ParameterList * pl;
-    int count;
-    int size;
-  };
-
-  
-  AbstractParameter * getAtPos(int pos){
-    if(pos<params.size()){return params[pos];}
-    return nullptr;
-  }
-
-template<typename T>
-  bool commitAtPos(int pos,const T & v,ParamModifier *  setter=nullptr,bool force=false){
-    if(auto p =ParamCasting::to<T>(getAtPos(pos))){
-     p->commitValue(v,setter,force);
-     return true;
-   }
-   return false;
- }
-
-template<typename T>
- void fetchAllOfType(){
-  PListIterator it(this);
-  bool hasAtLeastOneFetch = false;
-  while(auto p=it.next()){
-    if(auto pp = ParamCasting::to<T>(p)){
-      hasAtLeastOneFetch =true;
-      pp->fetchValue();
-    }
-  }
-  if(hasAtLeastOneFetch){
-    
-  }
-}
-
-
-};
-
-
-template<typename T>
-class TypedParameterList : public ParameterList{
-public:
-
-
-  Parameter<T>* getAtPos(int pos){
-    if(pos<params.size()){return ParamCasting::to<T>(params[pos]);}
-    return nullptr;
-  }
-
-  
-};
 
 
 
